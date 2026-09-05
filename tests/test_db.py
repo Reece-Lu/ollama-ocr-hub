@@ -62,6 +62,20 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(summary["images"], 2)
         self.assertEqual(summary["ok"], 1)
 
+    def test_issue_key_for_ip_is_normalized_and_idempotent(self):
+        db.init_db()
+
+        first, is_new = db.issue_key_for_ip("::ffff:192.168.3.42")
+        again, is_new_again = db.issue_key_for_ip("192.168.3.42")
+
+        self.assertTrue(is_new)
+        self.assertFalse(is_new_again)
+        self.assertEqual(first, again)
+        self.assertEqual(db.lookup_key(first)["name"], "192.168.3.42")
+
+        with self.assertRaisesRegex(ValueError, "有效的本机 IP"):
+            db.issue_key_for_ip("not-an-ip")
+
 
 if __name__ == "__main__":
     unittest.main()

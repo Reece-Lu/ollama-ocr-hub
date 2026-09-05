@@ -4,6 +4,7 @@
 不需要额外的进程间通信。
 """
 
+import ipaddress
 import os
 import secrets
 import sqlite3
@@ -91,13 +92,13 @@ def local_day_start() -> float:
 
 
 def issue_key(name: str):
-    """按姓名幂等发放。同一个人重复领取，永远拿到同一把 key。
+    """按登记标识幂等发放。同一个标识重复领取，永远拿到同一把 key。
 
     返回 (api_key, is_new)。
     """
     name = name.strip()
     if not name:
-        raise ValueError("姓名不能为空")
+        raise ValueError("登记标识不能为空")
 
     with connect() as conn:
         row = conn.execute("SELECT * FROM keys WHERE name=?", (name,)).fetchone()
@@ -118,6 +119,19 @@ def issue_key(name: str):
             (name, new_key, time.time()),
         )
         return new_key, True
+
+
+def issue_key_for_ip(client_ip: str):
+    """按客户端 IP 发放密钥，并把 IPv4-mapped IPv6 统一成 IPv4。"""
+    value = (client_ip or "").strip().split("%", 1)[0]
+    try:
+        parsed = ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise ValueError("未能读取有效的本机 IP") from exc
+
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+        parsed = parsed.ipv4_mapped
+    return issue_key(str(parsed))
 
 
 def lookup_key(api_key: str):

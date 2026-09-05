@@ -33,7 +33,8 @@ services:
     image: ollama-ocr-hub
     command: streamlit run app.py
     ports:
-      - "8501:8501"
+      # Docker Desktop 会抹掉真实客户端 IP，所以容器端口只给 Mac 原生入口访问。
+      - "127.0.0.1:8502:8501"
     env_file: .env
     environment:
       # 面板不再走 127.0.0.1 找网关，改用 compose 网络里的服务名
@@ -43,6 +44,8 @@ services:
       # 面板给同事展示的示例地址要写宿主机上实际发布的端口
       OCR_HUB_PORT: "8010"
       OCR_HUB_DB: /data/hub.db
+      # 8502 只绑定宿主机回环，X-Forwarded-For 只能来自 panel_gateway.py。
+      OCR_HUB_TRUST_PROXY_HEADERS: "1"
       TZ: Asia/Shanghai
     volumes:
       - hubdata:/data

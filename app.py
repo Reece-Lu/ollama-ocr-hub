@@ -1,7 +1,7 @@
 """内部 OCR 服务面板。
 
 同事在这里领密钥、看当前排队情况和最近的处理记录。
-不需要注册账号，填姓名即可，同一个姓名永远拿到同一把密钥。
+不需要注册账号，按访问设备 IP 登记，同一个 IP 永远拿到同一把密钥。
 """
 
 import os
@@ -21,6 +21,9 @@ PROXY_URL = os.environ.get("OCR_HUB_PROXY_URL", f"http://127.0.0.1:{PROXY_PORT}"
 METRICS_URL = os.environ.get("OCR_HUB_METRICS_URL", "http://127.0.0.1:9105")
 ADMIN_PASSWORD = os.environ.get("OCR_HUB_ADMIN_PASSWORD", "")
 DEFAULT_MODEL = os.environ.get("OCR_HUB_DEFAULT_MODEL", "deepseek-ocr")
+TRUST_PROXY_HEADERS = os.environ.get(
+    "OCR_HUB_TRUST_PROXY_HEADERS", "0"
+).lower() in ("1", "true", "yes")
 
 
 @st.cache_data(ttl=300)
@@ -37,6 +40,18 @@ def lan_host() -> str:
         return ip
     except Exception:
         return "127.0.0.1"
+
+
+def browser_ip():
+    """读取当前浏览器连接的来源 IP；无效值交给发放逻辑拒绝。"""
+    try:
+        if TRUST_PROXY_HEADERS:
+            forwarded = st.context.headers.get("X-Forwarded-For", "")
+            if forwarded:
+                return forwarded.split(",", 1)[0].strip()
+        return st.context.ip_address
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=3)
@@ -74,7 +89,7 @@ def recent_frame(limit: int, name: str):
         records.append(
             {
                 "时间": datetime.fromtimestamp(r["enqueued_at"]).strftime("%H:%M:%S"),
-                "调用者": r["name"],
+                "密钥登记 IP": r["name"],
                 "客户端 IP": r["client_ip"] or "未知",
                 "模型": r["model"],
                 "图片": r["image_count"],
@@ -123,30 +138,43 @@ db.init_db()
 
 host = lan_host()
 base_url = f"http://{host}:{PROXY_PORT}/v1"
+registered_ip = browser_ip()
 
 
 # --- 侧栏：领密钥 -------------------------------------------------------
 
 with st.sidebar:
     st.subheader("我的密钥")
-    st.caption("填你的名字就行，不用注册。同一个名字每次拿到的是同一把密钥。")
+    st.caption("自动读取当前访问设备的 IP。同一个 IP 重复登记，会返回同一把密钥。")
 
-    name = st.text_input("姓名", key="who", placeholder="张三")
+    if registered_ip:
+        st.caption("当前设备 IP")
+        st.code(registered_ip, language=None)
+    else:
+        st.warning("暂时无法读取当前设备 IP，请刷新页面后重试。")
 
-    if st.button("获取密钥", type="primary", width="stretch"):
-        if not name.strip():
-            st.warning("先填一下名字")
-        else:
-            try:
-                key, is_new = db.issue_key(name)
-                st.session_state["my_key"] = key
-                st.session_state["key_is_new"] = is_new
-            except ValueError as e:
-                st.warning(str(e))
+    if st.session_state.get("my_key_ip") not in (None, registered_ip):
+        st.session_state.pop("my_key", None)
+        st.session_state.pop("key_is_new", None)
+        st.session_state.pop("my_key_ip", None)
+
+    if st.button(
+        "登记本机 IP 并获取密钥",
+        type="primary",
+        width="stretch",
+        disabled=not registered_ip,
+    ):
+        try:
+            key, is_new = db.issue_key_for_ip(registered_ip)
+            st.session_state["my_key"] = key
+            st.session_state["key_is_new"] = is_new
+            st.session_state["my_key_ip"] = registered_ip
+        except ValueError as e:
+            st.warning(str(e))
 
     if "my_key" in st.session_state:
         my_key = st.session_state["my_key"]
-        st.caption("新建的密钥" if st.session_state.get("key_is_new") else "你之前的密钥")
+        st.caption("新建的密钥" if st.session_state.get("key_is_new") else "该 IP 已登记的密钥")
         st.code(my_key, language=None)
 
         st.divider()
@@ -277,7 +305,7 @@ head, tog = st.columns([4, 1])
 head.subheader("最近请求")
 only_mine = tog.checkbox("只看我的", value=False)
 
-frame = recent_frame(100, name if only_mine else None)
+frame = recent_frame(100, registered_ip if only_mine else None)
 
 if frame.empty:
     st.caption("还没有请求记录。领一把密钥，发第一张图试试。")
@@ -289,7 +317,7 @@ else:
         height=420,
         column_config={
             "时间": st.column_config.TextColumn(width="small"),
-            "调用者": st.column_config.TextColumn(width="small"),
+            "密钥登记 IP": st.column_config.TextColumn(width="small"),
             "客户端 IP": st.column_config.TextColumn(width="small"),
             "图片": st.column_config.NumberColumn(width="small"),
             "排队": st.column_config.TextColumn(width="small"),
@@ -314,7 +342,7 @@ with st.expander("管理"):
                     pd.DataFrame(
                         [
                             {
-                                "姓名": k["name"],
+                                "登记 IP / 旧标识": k["name"],
                                 "密钥": k["api_key"],
                                 "领取时间": datetime.fromtimestamp(
                                     k["created_at"]
@@ -330,7 +358,7 @@ with st.expander("管理"):
 
             a, b = st.columns(2)
             with a:
-                target = st.text_input("停用某人的密钥（填姓名）")
+                target = st.text_input("停用密钥（填登记 IP 或旧姓名）")
                 if st.button("停用") and target.strip():
                     db.revoke_key(target)
                     st.cache_data.clear()

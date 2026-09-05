@@ -10,7 +10,7 @@
                                  ↓ 写
                             data/hub.db
                                  ↑ 读
-同事的浏览器 ──────────────>  面板 :8501
+同事的浏览器 ──> Mac 面板入口 :8501 ──> Streamlit 容器 :8502
                                  │
                                  └─> Mac 指标服务 :9105（仅本机）
 ```
@@ -25,7 +25,8 @@ Ollama 自己不带认证，所以它只监听 `127.0.0.1`，对外一律走网�
 |---|---|---|---|
 | 11434 | Ollama | 只有网关 | 127.0.0.1 |
 | 8000 | 网关 | 同事的程序 | 0.0.0.0 |
-| 8501 | 面板 | 同事的浏览器 | 0.0.0.0 |
+| 8501 | Mac 原生面板入口 | 同事的浏览器 | 0.0.0.0 |
+| 8502 | Streamlit 面板容器 | 只有 Mac 原生入口 | 127.0.0.1 |
 | 9105 | Mac 指标服务 | 只有本机和 Docker Desktop | 127.0.0.1 |
 
 ## 安装
@@ -71,7 +72,7 @@ macOS 上 Docker 跑在 Linux 虚拟机里，拿不到 Metal，Ollama 进容器�
 
 ```bash
 docker compose up -d --build
-./scripts/start-metrics.sh
+./scripts/start-metrics.sh  # 同时启动 Mac 指标服务和保留真实 IP 的面板入口
 ```
 
 容器通过 `host.docker.internal:11434` 回连宿主机的 Ollama。Docker Desktop
@@ -93,6 +94,9 @@ docker compose up -d --build
 - CPU、GPU、统一内存和 Swap 必须由 `scripts/start-metrics.sh` 在 Mac 原生采集。
   指标服务只监听 `127.0.0.1:9105`，不会直接暴露给同事。GPU 活跃度来自
   Apple GPU 驱动的 `Device Utilization %`，不需要 `sudo`。
+- Streamlit 容器只发布到宿主机回环地址 `127.0.0.1:8502`。同事访问的 8501
+  由同一个 Mac 原生进程转发并写入可信的 `X-Forwarded-For`，这样登记页面才能
+  取得真实局域网客户端 IP，而不是 Docker Desktop 的 `192.168.65.1`。
 
 常用命令：
 
@@ -108,10 +112,9 @@ docker compose down             # 停掉（数据卷保留）
 图片数、成功率、平均耗时和最后访问时间。升级前的历史记录没有来源地址，会显示为
 「未知」。
 
-Docker Desktop 的端口转发在部分版本或网络模式下可能把不同设备都显示成同一个
-Docker 网关 IP。先让手机和一台同事电脑各做一次 OCR：如果面板显示两个真实的
-局域网地址，就不需要额外配置；如果都显示相同的 `192.168.65.x` 地址，则需要在
-Mac 宿主机前置反向代理，由它写入 `X-Forwarded-For`，然后设置：
+Docker Desktop 的端口转发会经过宿主机后端进程，容器通常只能看到 Docker 网关
+IP。当前 Docker 配置已经让 `scripts/start-metrics.sh` 同时启动一个 Mac 原生面板
+入口，由它写入可信的 `X-Forwarded-For`。若以后换成自己的 Caddy/Nginx，也需要设置：
 
 ```text
 OCR_HUB_TRUST_PROXY_HEADERS=1
@@ -122,10 +125,11 @@ OCR_HUB_TRUST_PROXY_HEADERS=1
 
 ## 同事怎么用
 
-1. 打开面板，侧栏填自己的名字，点「获取密钥」
+1. 打开面板，确认自动识别的本机 IP，点「登记本机 IP 并获取密钥」
 2. 复制页面上给出的调用示例，改一下图片路径
 
-同一个名字每次领到的是同一把密钥，重复点没有副作用。
+同一个 IP 每次领到的是同一把密钥，重复点没有副作用。IP 来自浏览器与面板的
+连接地址；如果前面增加了反向代理，需要让代理保留真实客户端 IP。
 
 ```python
 from openai import OpenAI
@@ -181,7 +185,7 @@ python3 ocr-client.py 扫描件/ --out 结果/    # 整个目录，每张存一�
 python3 ocr-client.py *.png -c 2          # 并发 2 张
 ```
 
-密钥去面板 `http://192.168.3.20:8501` 填名字领。服务器地址已经写死在脚本开头的
+密钥去面板 `http://192.168.3.20:8501`，登记页面自动识别的本机 IP 后领取。服务器地址已经写死在脚本开头的
 `DEFAULT_URL` 里，机器 IP 变了就改那一行，或者用 `--url` / `OCR_HUB_URL` 覆盖。
 
 **脚本默认绕开系统代理。** 装了 Surge / Clash 之类的机器上，`HTTP_PROXY` 会把发往
@@ -253,18 +257,22 @@ grounding 模式还会吐 `<|ref|>文字<|/ref|><|det|>[[坐标]]<|/det|>`。
 | `OCR_HUB_METRICS_URL` | `http://127.0.0.1:9105` | 面板读取 Mac 指标的地址 |
 | `OCR_HUB_METRICS_BIND` | `127.0.0.1` | Mac 指标服务监听地址 |
 | `OCR_HUB_METRICS_PORT` | `9105` | Mac 指标服务端口 |
+| `OCR_HUB_PANEL_BIND` | `0.0.0.0` | Mac 原生面板入口监听地址 |
+| `OCR_HUB_PANEL_PORT` | `8501` | 同事浏览器访问的面板端口 |
+| `OCR_HUB_PANEL_UPSTREAM` | `http://127.0.0.1:8502` | Streamlit 容器在宿主机上的回环地址 |
 | `OCR_HUB_ADMIN_PASSWORD` | 空 | 不设则面板管理区块不可用 |
 | `OCR_HUB_DB` | `data/hub.db` | 数据库路径 |
 
 ## 数据
 
-只存两张表：`keys`（姓名、密钥）和 `requests`（谁、来源 IP、什么模型、几张图、耗时、状态）。
+只存两张表：`keys`（登记 IP/旧标识、密钥）和 `requests`（密钥登记标识、实际来源 IP、什么模型、几张图、耗时、状态）。
 
 **图片内容不落盘，只记录字节数。**
 
 ## 已知限制
 
-- 任何能访问面板的人填个名字就能领密钥。内部信任度不够的话，
+- 任何能访问面板的人都能按来源 IP 领密钥。IP 只能用于登记和区分局域网设备，
+  不能当作可靠的身份认证；内部信任度不够的话，
   在 `app.py` 的发放逻辑前加一道共享口令即可。
 - 网关是 HTTP，密钥在局域网里明文传输。要 HTTPS 的话前面再套一层 Caddy。
 - 面板每 3 秒轮询一次数据库。人多了可以把 `st.cache_data` 的 `ttl` 调大。

@@ -290,6 +290,19 @@ live_status()
 st.divider()
 
 
+# --- 接口说明 -----------------------------------------------------------
+
+with st.expander("接口说明", expanded=True):
+    api_col, auth_col = st.columns(2)
+    api_col.markdown(f"**服务地址**\n\n`{base_url}`")
+    api_col.markdown("**OCR 接口**\n\n`POST /chat/completions`")
+    auth_col.markdown("**鉴权方式**\n\n`Authorization: Bearer <你的密钥>`")
+    auth_col.markdown(f"**默认模型**\n\n`{DEFAULT_MODEL}`")
+    st.caption("先在左侧登记本机 IP 获取密钥；完整 Python 调用示例会显示在密钥下方。")
+
+st.divider()
+
+
 # --- 下部：客户端与最近请求 ---------------------------------------------
 
 st.subheader("今日客户端")

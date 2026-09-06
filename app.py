@@ -209,7 +209,12 @@ print(resp.choices[0].message.content)''',
 
 # --- 顶部：实时状态 -----------------------------------------------------
 
-st.title("OCR 服务")
+title_col, repo_col = st.columns(2, vertical_alignment="center")
+title_col.title("OCR 服务")
+repo_col.markdown(
+    "[github.com/Reece-Lu/ollama-ocr-hub]"
+    "(https://github.com/Reece-Lu/ollama-ocr-hub)"
+)
 
 
 @st.fragment(run_every="3s")
